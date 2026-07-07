@@ -106,7 +106,7 @@ agent_name               = "Ninja Network"
 agent_role               = "investing"
 openclaw_exec_host       = "sandbox"
 openclaw_sandbox_network = "bridge"   # Postgres + research APIs over the network
-agent_repo               = "git@github.com:quietcap/quiet-agent-network.git"
+agent_repo               = "git@github.com:jaitengill/quiet-agent-network.git"  # transfer to quietcap org later; GitHub redirects transfers
 agent_deploy_key_secret  = "quiet-agent-network-deploy-key"
 data_dsn_secret          = "network-agent-contact-intel-dsn"
 
