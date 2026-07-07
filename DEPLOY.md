@@ -82,18 +82,35 @@ Nothing runs against unconfirmed members: the roster op returns only
 
 ## 4. Secrets (Secret Manager, project atlas-486120)
 
+**Before `terraform apply`** — the two shared research keys must exist (the
+module grants the VM's SA accessor on them, which fails if they're missing):
+
 ```bash
-echo -n "postgres://network_agent:<pw>@10.98.0.3:5432/contact_intelligence?sslmode=require" \
-  | gcloud secrets create network-agent-contact-intel-dsn --data-file=-
 echo -n "<xai key>"      | gcloud secrets create xai-api-key --data-file=-
 echo -n "<parallel key>" | gcloud secrets create parallel-api-key --data-file=-
-# optional (direct X timelines):
+# optional (direct X timelines) — also uncomment X_BEARER_TOKEN in agents.tf:
 echo -n "<x bearer>"     | gcloud secrets create x-bearer-token --data-file=-
 ```
 
-Already exist: `exa-api-key`, `openai-api-key`. Grant the agent VM's service
-account `secretAccessor` on all of the above. A missing research key only
-degrades that provider — `research_person` reports per-provider status.
+(No keys yet? Comment them out of `shared_secret_ids` + `sandbox_secret_env`
+in agents.tf and ship Exa-only research; add them back later.)
+
+**After `terraform apply`** — the module creates the four agent-scoped secret
+CONTAINERS (`network-slack-bot-token`, `network-slack-app-token`,
+`network-quiet-platform-dsn`, `network-agent-contact-intel-dsn`) with the SA
+grants already attached; add versions before first boot:
+
+```bash
+echo -n "postgres://network_agent:<pw>@10.98.0.3:5432/contact_intelligence?sslmode=require" \
+  | gcloud secrets versions add network-agent-contact-intel-dsn --data-file=-
+echo -n "<platform read DSN>" | gcloud secrets versions add network-quiet-platform-dsn --data-file=-
+echo -n "xoxb-..."            | gcloud secrets versions add network-slack-bot-token --data-file=-
+echo -n "xapp-..."            | gcloud secrets versions add network-slack-app-token --data-file=-
+```
+
+Already exist: `exa-api-key`, `openai-api-key`, `anthropic-api-key`,
+`quiet-agent-network-deploy-key`. A missing research key only degrades that
+provider — `research_person` reports per-provider status.
 
 ## 5. Provision the VM (quiet-agent-infra + boiler)
 
@@ -106,7 +123,7 @@ agent_name               = "Ninja Network"
 agent_role               = "investing"
 openclaw_exec_host       = "sandbox"
 openclaw_sandbox_network = "bridge"   # Postgres + research APIs over the network
-agent_repo               = "git@github.com:jaitengill/quiet-agent-network.git"  # transfer to quietcap org later; GitHub redirects transfers
+agent_repo               = "git@github.com:quietcap/quiet-agent-network.git"  # module validation requires the quietcap org — transfer the repo there (deploy keys survive transfers)
 agent_deploy_key_secret  = "quiet-agent-network-deploy-key"
 data_dsn_secret          = "network-agent-contact-intel-dsn"
 
