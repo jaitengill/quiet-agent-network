@@ -174,3 +174,19 @@ def execute(dsn: str, sql: str, params: dict[str, Any] | tuple[Any, ...] = ()) -
             rows = cur.fetchall() if cur.description else []
         conn.commit()
     return [serialize(dict(r)) for r in rows]
+
+
+def execute_many(dsn: str, sql: str, params_list: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Run the same statement once per params dict in ONE transaction —
+    all-or-nothing (the connection context manager commits on success,
+    rolls back on any exception). Returns concatenated RETURNING rows."""
+    if psycopg2 is None:
+        raise RuntimeError("psycopg2 not installed")
+    out: list[dict[str, Any]] = []
+    with psycopg2.connect(dsn) as conn:
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            for params in params_list:
+                cur.execute(sql, params)
+                if cur.description:
+                    out.extend(cur.fetchall())
+    return [serialize(dict(r)) for r in out]

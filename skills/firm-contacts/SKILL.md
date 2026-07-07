@@ -16,7 +16,7 @@ a name, always *who* at the firm knows them and *how*.
 ## How to call the tool
 
 ```bash
-python /workspace/skills/firm-contacts/scripts/contacts.py '{"op":"<op>", ...}'
+python /home/quiet/.openclaw/workspace-network/skills/firm-contacts/scripts/contacts.py '{"op":"<op>", ...}'
 ```
 
 Returns JSON. If `ok:false` and `error_kind:"bad_request"`, fix the request shape

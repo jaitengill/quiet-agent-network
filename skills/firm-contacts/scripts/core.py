@@ -89,7 +89,9 @@ def dsn() -> str:
     d = env_value("CONTACT_INTEL_DSN")
     if d:
         return d
-    return secret_value(env_value("CONTACT_INTEL_DSN_SECRET") or "contact-intelligence-readonly-dsn")
+    # NOTE: diverges from the canonical quiet-ai-skills copy — this agent's
+    # secret is network-agent-contact-intel-dsn (see repo DEPLOY.md).
+    return secret_value(env_value("CONTACT_INTEL_DSN_SECRET") or "network-agent-contact-intel-dsn")
 
 
 # ── serialization ────────────────────────────────────────────────────────--

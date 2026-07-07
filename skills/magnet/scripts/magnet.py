@@ -88,7 +88,7 @@ def op_q100(req: dict[str, Any]) -> dict[str, Any]:
     LEFT JOIN orgs o ON o.id = c.org_id
     WHERE m.status = %(status)s
       AND (%(owner)s IS NULL OR lower(m.owner_email) = lower(%(owner)s))
-    ORDER BY m.tier, m.thesis_at ASC NULLS FIRST, c.canonical_name
+    ORDER BY m.thesis_at ASC NULLS FIRST, m.tier, c.canonical_name
     """
     rows = core.fetch(core.contact_dsn(), sql,
                       {"status": status, "owner": req.get("owner")}, service_role=True)
@@ -167,11 +167,11 @@ def op_set_thesis(req: dict[str, Any]) -> dict[str, Any]:
                    "{current_focus, hunting_for:[{need, kind, provenance, evidence:[{claim,url,date}], confidence}]}")
     rows = core.execute(core.contact_dsn(), """
         UPDATE q100_members SET thesis=%(thesis)s::jsonb, thesis_at=now(), updated_at=now()
-        WHERE contact_id=%(contact_id)s
+        WHERE contact_id=%(contact_id)s AND status='confirmed'
         RETURNING contact_id, thesis_at
     """, {"contact_id": req["contact_id"], "thesis": json.dumps(thesis)})
     if not rows:
-        return bad(f"no q100_member with contact_id '{req['contact_id']}'")
+        return bad(f"no CONFIRMED q100_member with contact_id '{req['contact_id']}'")
     return ok("set_thesis", rows)
 
 
@@ -181,7 +181,9 @@ def op_record_asks(req: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(asks, list) or not asks:
         return bad("`asks` must be a non-empty array of "
                    "{contact_id, ask, kind, source?, source_id?, evidence?, asked_at?}")
-    inserted: list[dict[str, Any]] = []
+    # Validate EVERYTHING before any write, so bad_request never means
+    # "partially applied".
+    cleaned: list[dict[str, Any]] = []
     for i, a in enumerate(asks):
         if not a.get("contact_id") or not (a.get("ask") or "").strip():
             return bad(f"asks[{i}]: `contact_id` and `ask` are required")
@@ -190,17 +192,26 @@ def op_record_asks(req: dict[str, Any]) -> dict[str, Any]:
         source = a.get("source") or "manual"
         if source not in ASK_SOURCES:
             return bad(f"asks[{i}]: `source` must be one of {', '.join(ASK_SOURCES)}")
-        rows = core.execute(core.contact_dsn(), """
-            INSERT INTO asks (contact_id, ask, kind, source, source_id, evidence, asked_at)
-            VALUES (%(contact_id)s, %(ask)s, %(kind)s, %(source)s, %(source_id)s, %(evidence)s, %(asked_at)s)
-            ON CONFLICT (contact_id, source, coalesce(source_id, ''), md5(ask)) DO NOTHING
-            RETURNING id, contact_id, ask, kind
-        """, {
+        cleaned.append({
             "contact_id": a["contact_id"], "ask": a["ask"].strip(), "kind": a["kind"],
             "source": source, "source_id": a.get("source_id"),
             "evidence": a.get("evidence"), "asked_at": a.get("asked_at"),
         })
-        inserted.extend(rows)
+    ids = sorted({c["contact_id"] for c in cleaned})
+    confirmed = {r["contact_id"] for r in core.fetch(core.contact_dsn(), """
+        SELECT contact_id::text AS contact_id FROM q100_members
+        WHERE contact_id::text = ANY(%(ids)s) AND status='confirmed'
+    """, {"ids": ids})}
+    unknown = [i for i in ids if i not in confirmed]
+    if unknown:
+        return bad(f"not confirmed q100_members: {', '.join(unknown)}")
+    # One transaction: every ask lands or none do.
+    inserted = core.execute_many(core.contact_dsn(), """
+        INSERT INTO asks (contact_id, ask, kind, source, source_id, evidence, asked_at)
+        VALUES (%(contact_id)s, %(ask)s, %(kind)s, %(source)s, %(source_id)s, %(evidence)s, %(asked_at)s)
+        ON CONFLICT (contact_id, source, coalesce(source_id, ''), md5(ask)) DO NOTHING
+        RETURNING id, contact_id, ask, kind
+    """, cleaned)
     return ok("record_asks", inserted, submitted=len(asks),
               deduped=len(asks) - len(inserted))
 
@@ -209,19 +220,29 @@ def op_record_asks(req: dict[str, Any]) -> dict[str, Any]:
 def op_propose_play(req: dict[str, Any]) -> dict[str, Any]:
     if not req.get("contact_id") or not (req.get("action") or "").strip():
         return bad("`contact_id` and `action` are required")
+    # Single statement so the play INSERT and the ask status flip commit (or
+    # fail) together — plays has no dedupe index, so a retry after a partial
+    # failure must never be possible.
     rows = core.execute(core.contact_dsn(), """
-        INSERT INTO plays (ask_id, contact_id, match_name, action, rationale)
-        VALUES (%(ask_id)s, %(contact_id)s, %(match_name)s, %(action)s, %(rationale)s)
-        RETURNING id, contact_id, match_name, action, status
+        WITH new_play AS (
+            INSERT INTO plays (ask_id, contact_id, match_name, action, rationale)
+            SELECT %(ask_id)s, %(contact_id)s, %(match_name)s, %(action)s, %(rationale)s
+            WHERE EXISTS (SELECT 1 FROM q100_members m
+                           WHERE m.contact_id = %(contact_id)s AND m.status='confirmed')
+            RETURNING id, contact_id, match_name, action, status
+        ), flip_ask AS (
+            UPDATE asks SET status='matched'
+            WHERE %(ask_id)s::uuid IS NOT NULL AND id = %(ask_id)s::uuid
+              AND status='open' AND EXISTS (SELECT 1 FROM new_play)
+        )
+        SELECT * FROM new_play
     """, {
         "ask_id": req.get("ask_id"), "contact_id": req["contact_id"],
         "match_name": req.get("match_name"), "action": req["action"].strip(),
         "rationale": req.get("rationale"),
     })
-    if req.get("ask_id"):
-        core.execute(core.contact_dsn(),
-                     "UPDATE asks SET status='matched' WHERE id=%(id)s AND status='open'",
-                     {"id": req["ask_id"]})
+    if not rows:
+        return bad(f"contact_id '{req['contact_id']}' is not a confirmed q100_member")
     return ok("propose_play", rows)
 
 

@@ -6,7 +6,7 @@ description: The Q100 tool — Quiet's 100 most important relationships. Fetch t
 # Magnet — the Q100 tool
 
 ```bash
-python /workspace/skills/magnet/scripts/magnet.py '{"op":"<op>", ...}'
+python /home/quiet/.openclaw/workspace-network/skills/magnet/scripts/magnet.py '{"op":"<op>", ...}'
 ```
 
 | op | what it does |
